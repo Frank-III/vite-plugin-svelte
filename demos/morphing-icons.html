@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morphing Icons Demo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+      font-weight: 300;
+    }
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 40px;
+    }
+
+    .main-icon {
+      width: 200px;
+      height: 200px;
+      background: #16213e;
+      border-radius: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 40px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+
+    .main-icon svg {
+      width: 120px;
+      height: 120px;
+    }
+
+    .main-icon svg line {
+      stroke: #e94560;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .icon-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    .icon-btn {
+      width: 80px;
+      height: 80px;
+      background: #16213e;
+      border: 2px solid transparent;
+      border-radius: 16px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .icon-btn:hover {
+      background: #1f2b47;
+      transform: translateY(-2px);
+    }
+
+    .icon-btn.active {
+      border-color: #e94560;
+      background: #1f2b47;
+    }
+
+    .icon-btn svg {
+      width: 32px;
+      height: 32px;
+    }
+
+    .icon-btn svg line {
+      stroke: #e94560;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+    }
+
+    .icon-btn span {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .current-label {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .current-name {
+      font-size: 24px;
+      font-weight: 500;
+      color: #e94560;
+      margin-bottom: 30px;
+      text-transform: capitalize;
+    }
+
+    .auto-play {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .auto-play button {
+      padding: 12px 24px;
+      background: #e94560;
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .auto-play button:hover {
+      background: #ff6b6b;
+      transform: translateY(-1px);
+    }
+
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #888;
+    }
+
+    .speed-control input {
+      width: 100px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Morphing Icons</h1>
+  <p class="subtitle">All icons use exactly 3 SVG lines. Click any icon to morph.</p>
+
+  <p class="current-label">Currently showing:</p>
+  <p class="current-name" id="currentName">menu</p>
+
+  <div class="main-icon">
+    <svg viewBox="0 0 14 14" id="mainSvg">
+      <line id="line1" x1="2" y1="3" x2="12" y2="3" />
+      <line id="line2" x1="2" y1="7" x2="12" y2="7" />
+      <line id="line3" x1="2" y1="11" x2="12" y2="11" />
+    </svg>
+  </div>
+
+  <div class="icon-grid" id="iconGrid"></div>
+
+  <div class="auto-play">
+    <button id="autoPlayBtn">Auto Play</button>
+    <div class="speed-control">
+      <label>Speed:</label>
+      <input type="range" id="speedSlider" min="200" max="2000" value="800">
+      <span id="speedValue">800ms</span>
+    </div>
+  </div>
+
+  <script>
+    // Icon definitions: each icon has 3 lines with [x1, y1, x2, y2, opacity]
+    // Collapsed lines go to center point (7, 7) with opacity 0
+    const CENTER = 7;
+    const COLLAPSED = [CENTER, CENTER, CENTER, CENTER, 0];
+
+    const icons = {
+      menu: {
+        line1: [2, 3, 12, 3, 1],
+        line2: [2, 7, 12, 7, 1],
+        line3: [2, 11, 12, 11, 1]
+      },
+      close: {
+        line1: [3, 3, 11, 11, 1],
+        line2: [11, 3, 3, 11, 1],
+        line3: COLLAPSED
+      },
+      plus: {
+        line1: [7, 2, 7, 12, 1],
+        line2: [2, 7, 12, 7, 1],
+        line3: COLLAPSED
+      },
+      minus: {
+        line1: [3, 7, 11, 7, 1],
+        line2: COLLAPSED,
+        line3: COLLAPSED
+      },
+      check: {
+        line1: [2, 7, 5, 11, 1],
+        line2: [5, 11, 12, 3, 1],
+        line3: COLLAPSED
+      },
+      arrowRight: {
+        line1: [2, 7, 11, 7, 1],
+        line2: [7, 3, 11, 7, 1],
+        line3: [7, 11, 11, 7, 1]
+      },
+      arrowUp: {
+        line1: [7, 12, 7, 3, 1],
+        line2: [3, 7, 7, 3, 1],
+        line3: [11, 7, 7, 3, 1]
+      },
+      chevronRight: {
+        line1: [5, 2, 10, 7, 1],
+        line2: [5, 12, 10, 7, 1],
+        line3: COLLAPSED
+      },
+      play: {
+        line1: [4, 2, 4, 12, 1],
+        line2: [4, 2, 11, 7, 1],
+        line3: [4, 12, 11, 7, 1]
+      },
+      pause: {
+        line1: [4, 3, 4, 11, 1],
+        line2: [10, 3, 10, 11, 1],
+        line3: COLLAPSED
+      }
+    };
+
+    let currentIcon = 'menu';
+    let autoPlayInterval = null;
+
+    // Get DOM elements
+    const mainSvg = document.getElementById('mainSvg');
+    const line1 = document.getElementById('line1');
+    const line2 = document.getElementById('line2');
+    const line3 = document.getElementById('line3');
+    const currentNameEl = document.getElementById('currentName');
+    const iconGrid = document.getElementById('iconGrid');
+    const autoPlayBtn = document.getElementById('autoPlayBtn');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedValue = document.getElementById('speedValue');
+
+    // Create static SVG for button preview
+    function createIconSvg(iconName) {
+      const icon = icons[iconName];
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 14 14');
+
+      ['line1', 'line2', 'line3'].forEach(lineName => {
+        const [x1, y1, x2, y2, opacity] = icon[lineName];
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('opacity', opacity);
+        svg.appendChild(line);
+      });
+
+      return svg;
+    }
+
+    // Build icon grid
+    function buildIconGrid() {
+      Object.keys(icons).forEach(iconName => {
+        const btn = document.createElement('button');
+        btn.className = 'icon-btn' + (iconName === currentIcon ? ' active' : '');
+        btn.dataset.icon = iconName;
+        btn.appendChild(createIconSvg(iconName));
+
+        const label = document.createElement('span');
+        label.textContent = iconName.replace(/([A-Z])/g, ' $1').trim();
+        btn.appendChild(label);
+
+        btn.addEventListener('click', () => morphTo(iconName));
+        iconGrid.appendChild(btn);
+      });
+    }
+
+    // Morph to a new icon
+    function morphTo(iconName) {
+      if (iconName === currentIcon) return;
+
+      const icon = icons[iconName];
+
+      // Update lines
+      [line1, line2, line3].forEach((line, i) => {
+        const lineData = icon[`line${i + 1}`];
+        line.setAttribute('x1', lineData[0]);
+        line.setAttribute('y1', lineData[1]);
+        line.setAttribute('x2', lineData[2]);
+        line.setAttribute('y2', lineData[3]);
+        line.setAttribute('opacity', lineData[4]);
+      });
+
+      // Update UI
+      document.querySelectorAll('.icon-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.icon === iconName);
+      });
+
+      currentNameEl.textContent = iconName.replace(/([A-Z])/g, ' $1').trim();
+      currentIcon = iconName;
+    }
+
+    // Auto play through all icons
+    function toggleAutoPlay() {
+      if (autoPlayInterval) {
+        clearInterval(autoPlayInterval);
+        autoPlayInterval = null;
+        autoPlayBtn.textContent = 'Auto Play';
+      } else {
+        const iconNames = Object.keys(icons);
+        let index = iconNames.indexOf(currentIcon);
+
+        autoPlayInterval = setInterval(() => {
+          index = (index + 1) % iconNames.length;
+          morphTo(iconNames[index]);
+        }, parseInt(speedSlider.value));
+
+        autoPlayBtn.textContent = 'Stop';
+      }
+    }
+
+    // Event listeners
+    autoPlayBtn.addEventListener('click', toggleAutoPlay);
+    speedSlider.addEventListener('input', () => {
+      speedValue.textContent = speedSlider.value + 'ms';
+      if (autoPlayInterval) {
+        toggleAutoPlay();
+        toggleAutoPlay();
+      }
+    });
+
+    // Initialize
+    buildIconGrid();
+  </script>
+</body>
+</html>
