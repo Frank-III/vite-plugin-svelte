@@ -2,6 +2,7 @@
 
 <script>
 	// Animation Inspector - Pause, annotate, and capture animation state for AI
+	// Supports multiple annotations: pause at different points, annotate each, then copy all
 	import { onMount } from 'svelte';
 	import options from 'virtual:svelte-inspector-options';
 
@@ -13,13 +14,20 @@
 	let enabled = $state(false);
 	let paused_animations = $state([]);
 	let active_el = $state(null);
-	let show_popup = $state(false);
-	let annotation = $state('');
+
+	// Multi-annotation support
+	let annotations = $state([]); // Array of {state, note, id}
+	let current_annotation = $state('');
+	let show_quick_input = $state(false);
 	let captured_state = $state(null);
 
-	// Mouse position for popup
+	// UI positioning
 	let popup_x = $state(0);
 	let popup_y = $state(0);
+
+	// Feedback states
+	let show_copied_toast = $state(false);
+	let annotation_count = $derived(annotations.length);
 
 	// Icon for the toggle button (film/animation themed)
 	const icon = `data:image/svg+xml;base64,${btoa(
@@ -175,10 +183,15 @@
 	}
 
 	/**
-	 * Generate structured output for Claude Code
+	 * Generate structured output for a single annotation
 	 */
-	function generate_output(state, annotation_text) {
-		const lines = ['## Animation Annotation', ''];
+	function generate_single_output(state, annotation_text, index) {
+		const lines = [];
+
+		if (index !== undefined) {
+			lines.push(`### Annotation ${index + 1}`);
+			lines.push('');
+		}
 
 		if (state.file_loc) {
 			lines.push(`**File:** \`${state.file_loc}\``);
@@ -189,28 +202,21 @@
 		lines.push('');
 
 		if (annotation_text) {
-			lines.push('### Feedback');
-			lines.push(annotation_text);
+			lines.push(`**Feedback:** ${annotation_text}`);
 			lines.push('');
 		}
 
-		lines.push('### Current Animation State');
-
 		if (state.animations.length > 0) {
+			lines.push('**Animation State:**');
 			for (const anim of state.animations) {
-				lines.push(
-					`- **${anim.name}**: ${anim.progress !== undefined ? `${Math.round(anim.progress * 100)}%` : 'N/A'} through animation`
-				);
-				lines.push(`  - Current time: ${anim.currentTime}ms / ${anim.duration}ms`);
-				lines.push(`  - Phase: ${anim.phase}`);
-				lines.push(`  - Easing: ${anim.easing}`);
+				const progress =
+					anim.progress !== undefined ? `${Math.round(anim.progress * 100)}%` : 'N/A';
+				lines.push(`- ${anim.name}: ${progress} (${anim.currentTime}ms / ${anim.duration}ms)`);
 			}
-		} else {
-			lines.push('- No active animations detected (may be CSS transition or JS-driven)');
+			lines.push('');
 		}
-		lines.push('');
 
-		lines.push('### Computed Styles at This Moment');
+		lines.push('**Computed Styles:**');
 		lines.push('```css');
 		for (const [key, value] of Object.entries(state.styles)) {
 			if (value && value !== 'none' && value !== 'auto' && value !== 'normal') {
@@ -218,14 +224,36 @@
 			}
 		}
 		lines.push('```');
-		lines.push('');
 
-		if (state.svg_data) {
-			lines.push('### SVG Data');
-			if (state.svg_data.d) {
-				lines.push('```');
-				lines.push(`d="${state.svg_data.d}"`);
-				lines.push('```');
+		if (state.svg_data?.d) {
+			lines.push('');
+			lines.push('**SVG Path:**');
+			lines.push('```');
+			lines.push(`d="${state.svg_data.d}"`);
+			lines.push('```');
+		}
+
+		return lines.join('\n');
+	}
+
+	/**
+	 * Generate combined output for all annotations
+	 */
+	function generate_all_output() {
+		const lines = [
+			'## Animation Annotations',
+			'',
+			`*${annotations.length} annotation${annotations.length !== 1 ? 's' : ''} captured during animation inspection*`,
+			''
+		];
+
+		for (let i = 0; i < annotations.length; i++) {
+			const { state, note } = annotations[i];
+			lines.push(generate_single_output(state, note, i));
+			if (i < annotations.length - 1) {
+				lines.push('');
+				lines.push('---');
+				lines.push('');
 			}
 		}
 
@@ -246,25 +274,10 @@
 	}
 
 	/**
-	 * Handle right-click - pause only
-	 */
-	function handle_contextmenu(e) {
-		if (!enabled) return;
-
-		e.preventDefault();
-		e.stopPropagation();
-
-		const el = e.target;
-		active_el = el;
-		pause_animations(el);
-		captured_state = capture_element_state(el);
-	}
-
-	/**
-	 * Handle left-click - pause and show annotation popup
+	 * Handle click - pause and show quick annotation input
 	 */
 	function handle_click(e) {
-		if (!enabled) return;
+		if (!enabled || show_quick_input) return;
 
 		e.preventDefault();
 		e.stopPropagation();
@@ -276,42 +289,85 @@
 
 		// Position popup near click
 		popup_x = Math.min(e.clientX, window.innerWidth - 320);
-		popup_y = Math.min(e.clientY, window.innerHeight - 250);
+		popup_y = Math.min(e.clientY, window.innerHeight - 200);
 
-		show_popup = true;
-		annotation = '';
+		show_quick_input = true;
+		current_annotation = '';
 	}
 
 	/**
-	 * Submit annotation and copy to clipboard
+	 * Handle right-click - same as click (pause and annotate)
 	 */
-	async function submit_annotation() {
+	function handle_contextmenu(e) {
+		if (!enabled) return;
+		e.preventDefault();
+		handle_click(e);
+	}
+
+	/**
+	 * Save current annotation and resume
+	 */
+	function save_annotation() {
 		if (!captured_state) return;
 
-		const output = generate_output(captured_state, annotation);
+		// Add to annotations list
+		annotations = [
+			...annotations,
+			{
+				id: Date.now(),
+				state: captured_state,
+				note: current_annotation || '(no note)'
+			}
+		];
+
+		// Reset and resume
+		show_quick_input = false;
+		current_annotation = '';
+		resume_animations();
+		active_el = null;
+		captured_state = null;
+	}
+
+	/**
+	 * Skip annotation (just resume)
+	 */
+	function skip_annotation() {
+		show_quick_input = false;
+		current_annotation = '';
+		resume_animations();
+		active_el = null;
+		captured_state = null;
+	}
+
+	/**
+	 * Remove an annotation from the list
+	 */
+	function remove_annotation(id) {
+		annotations = annotations.filter((a) => a.id !== id);
+	}
+
+	/**
+	 * Copy all annotations to clipboard
+	 */
+	async function copy_all() {
+		if (annotations.length === 0) return;
+
+		const output = generate_all_output();
 		const copied = await copy_to_clipboard(output);
 
 		if (copied) {
-			// Show brief success feedback
-			show_popup = false;
-			annotation = '';
+			show_copied_toast = true;
+			setTimeout(() => {
+				show_copied_toast = false;
+			}, 2000);
 		}
-
-		// Resume animations after copying
-		resume_animations();
-		active_el = null;
-		captured_state = null;
 	}
 
 	/**
-	 * Cancel annotation
+	 * Clear all annotations
 	 */
-	function cancel_annotation() {
-		show_popup = false;
-		annotation = '';
-		resume_animations();
-		active_el = null;
-		captured_state = null;
+	function clear_all() {
+		annotations = [];
 	}
 
 	// Key detection helpers (same as main inspector)
@@ -342,7 +398,14 @@
 			e.preventDefault();
 			toggle();
 		} else if (enabled && is_escape(e)) {
-			disable();
+			if (show_quick_input) {
+				skip_annotation();
+			} else {
+				disable();
+			}
+		} else if (show_quick_input && e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			save_annotation();
 		}
 	}
 
@@ -363,7 +426,7 @@
 
 	function disable() {
 		enabled = false;
-		show_popup = false;
+		show_quick_input = false;
 		resume_animations();
 		active_el = null;
 		captured_state = null;
@@ -389,13 +452,17 @@
 	style="background-image: url({icon});"
 	onclick={() => toggle()}
 	aria-label={`${enabled ? 'disable' : 'enable'} animation inspector`}
-></button>
+>
+	{#if annotation_count > 0}
+		<span class="badge">{annotation_count}</span>
+	{/if}
+</button>
 
 <!-- Status Indicator -->
 {#if enabled}
 	<div id="svelte-animation-inspector-status">
-		🎬 Animation Inspector Active
-		<span class="hint">Left-click: annotate | Right-click: pause only | Esc: exit</span>
+		Animation Inspector Active
+		<span class="hint">Click to pause & annotate | Esc: exit</span>
 	</div>
 {/if}
 
@@ -413,53 +480,69 @@
 	></div>
 {/if}
 
-<!-- Annotation Popup -->
-{#if show_popup && captured_state}
-	<div id="svelte-animation-inspector-popup" style="left: {popup_x}px; top: {popup_y}px;">
-		<div class="popup-header">
-			<span class="element-info">
-				&lt;{captured_state.tagName}&gt;
-				{#if captured_state.file_loc}
-					<span class="file-loc">{captured_state.file_loc}</span>
-				{/if}
-			</span>
-			<button class="close-btn" onclick={cancel_annotation}>×</button>
+<!-- Quick Annotation Input -->
+{#if show_quick_input && captured_state}
+	<div id="svelte-animation-inspector-quick" style="left: {popup_x}px; top: {popup_y}px;">
+		<div class="quick-header">
+			<span class="element-tag">&lt;{captured_state.tagName}&gt;</span>
+			{#if captured_state.animations.length > 0}
+				<span class="anim-progress">
+					{Math.round((captured_state.animations[0]?.progress || 0) * 100)}%
+				</span>
+			{/if}
 		</div>
 
-		{#if captured_state.animations.length > 0}
-			<div class="animation-info">
-				{#each captured_state.animations as anim, i (i)}
-					<div class="anim-item">
-						<strong>{anim.name}</strong>: {anim.progress !== undefined
-							? `${Math.round(anim.progress * 100)}%`
-							: 'N/A'}
-					</div>
-				{/each}
-			</div>
-		{/if}
-
-		<div class="annotation-section">
-			<label for="annotation-input">What should change?</label>
-			<textarea
-				id="annotation-input"
-				bind:value={annotation}
-				placeholder="e.g., 'Make this slower', 'More bounce at the end', 'Fade should start earlier'"
-				rows="3"
-			></textarea>
-		</div>
+		<input
+			type="text"
+			class="quick-input"
+			bind:value={current_annotation}
+			placeholder="What should change here?"
+			autofocus
+		/>
 
 		<div class="quick-suggestions">
-			<button onclick={() => (annotation = 'Make this slower')}>Slower</button>
-			<button onclick={() => (annotation = 'Make this faster')}>Faster</button>
-			<button onclick={() => (annotation = 'Add more bounce/spring')}>Bouncier</button>
-			<button onclick={() => (annotation = 'Make this smoother')}>Smoother</button>
-			<button onclick={() => (annotation = 'Increase delay before starting')}>More delay</button>
+			<button onclick={() => (current_annotation = 'Slower')}>Slower</button>
+			<button onclick={() => (current_annotation = 'Faster')}>Faster</button>
+			<button onclick={() => (current_annotation = 'More bounce')}>Bounce</button>
+			<button onclick={() => (current_annotation = 'Smoother')}>Smooth</button>
 		</div>
 
-		<div class="popup-actions">
-			<button class="cancel-btn" onclick={cancel_annotation}>Cancel</button>
-			<button class="submit-btn" onclick={submit_annotation}> Copy for Claude Code </button>
+		<div class="quick-actions">
+			<button class="skip-btn" onclick={skip_annotation}>Skip</button>
+			<button class="save-btn" onclick={save_annotation}> Save & Resume </button>
 		</div>
+	</div>
+{/if}
+
+<!-- Annotations Panel -->
+{#if enabled && annotations.length > 0}
+	<div id="svelte-animation-inspector-panel">
+		<div class="panel-header">
+			<span>{annotation_count} annotation{annotation_count !== 1 ? 's' : ''}</span>
+			<button class="clear-btn" onclick={clear_all}>Clear</button>
+		</div>
+
+		<div class="panel-list">
+			{#each annotations as ann, i (ann.id)}
+				<div class="panel-item">
+					<div class="item-header">
+						<span class="item-num">#{i + 1}</span>
+						<span class="item-tag">&lt;{ann.state.tagName}&gt;</span>
+						<button class="item-remove" onclick={() => remove_annotation(ann.id)}>×</button>
+					</div>
+					<div class="item-note">{ann.note}</div>
+				</div>
+			{/each}
+		</div>
+
+		<button class="copy-all-btn" onclick={copy_all}> Copy All for Claude Code </button>
+	</div>
+{/if}
+
+<!-- Copied Toast -->
+{#if show_copied_toast}
+	<div id="svelte-animation-inspector-toast">
+		Copied {annotation_count} annotation{annotation_count !== 1 ? 's' : ''} to clipboard!
 	</div>
 {/if}
 
@@ -504,6 +587,26 @@
 		box-shadow: 0 0 0 3px rgba(255, 62, 0, 0.3);
 	}
 
+	.badge {
+		position: absolute;
+		top: -6px;
+		right: -6px;
+		background: #ff3e00;
+		color: white;
+		font-size: 11px;
+		font-weight: 600;
+		min-width: 18px;
+		height: 18px;
+		border-radius: 9px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family:
+			system-ui,
+			-apple-system,
+			sans-serif;
+	}
+
 	#svelte-animation-inspector-status {
 		position: fixed;
 		top: 8px;
@@ -539,9 +642,10 @@
 		border-radius: 4px;
 	}
 
-	#svelte-animation-inspector-popup {
+	/* Quick Annotation Input */
+	#svelte-animation-inspector-quick {
 		position: fixed;
-		width: 300px;
+		width: 280px;
 		background: white;
 		border-radius: 12px;
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
@@ -553,88 +657,46 @@
 		overflow: hidden;
 	}
 
-	.popup-header {
+	.quick-header {
 		display: flex;
 		justify-content: space-between;
-		align-items: flex-start;
-		padding: 12px;
+		align-items: center;
+		padding: 10px 12px;
 		background: #f8f8f8;
 		border-bottom: 1px solid #eee;
 	}
 
-	.element-info {
+	.element-tag {
 		font-size: 13px;
 		font-weight: 600;
 		color: #333;
 	}
 
-	.file-loc {
-		display: block;
-		font-size: 11px;
-		font-weight: normal;
-		color: #666;
-		margin-top: 2px;
-		word-break: break-all;
-	}
-
-	.close-btn {
-		background: none;
-		border: none;
-		font-size: 20px;
-		color: #999;
-		cursor: pointer;
-		padding: 0;
-		line-height: 1;
-	}
-
-	.close-btn:hover {
-		color: #333;
-	}
-
-	.animation-info {
-		padding: 8px 12px;
-		background: #fff8f6;
-		border-bottom: 1px solid #ffe5df;
-	}
-
-	.anim-item {
+	.anim-progress {
 		font-size: 12px;
 		color: #ff3e00;
-	}
-
-	.annotation-section {
-		padding: 12px;
-	}
-
-	.annotation-section label {
-		display: block;
-		font-size: 12px;
 		font-weight: 600;
-		color: #333;
-		margin-bottom: 6px;
 	}
 
-	.annotation-section textarea {
+	.quick-input {
 		width: 100%;
-		padding: 8px;
-		border: 1px solid #ddd;
-		border-radius: 6px;
-		font-size: 13px;
-		resize: none;
+		padding: 12px;
+		border: none;
+		border-bottom: 1px solid #eee;
+		font-size: 14px;
 		font-family: inherit;
 	}
 
-	.annotation-section textarea:focus {
+	.quick-input:focus {
 		outline: none;
-		border-color: #ff3e00;
-		box-shadow: 0 0 0 2px rgba(255, 62, 0, 0.1);
+		background: #fffaf9;
 	}
 
 	.quick-suggestions {
-		padding: 0 12px 12px;
+		padding: 8px 12px;
 		display: flex;
-		flex-wrap: wrap;
 		gap: 6px;
+		border-bottom: 1px solid #eee;
 	}
 
 	.quick-suggestions button {
@@ -652,15 +714,13 @@
 		color: white;
 	}
 
-	.popup-actions {
+	.quick-actions {
 		display: flex;
 		gap: 8px;
-		padding: 12px;
-		background: #f8f8f8;
-		border-top: 1px solid #eee;
+		padding: 10px 12px;
 	}
 
-	.cancel-btn {
+	.skip-btn {
 		flex: 1;
 		padding: 8px;
 		background: white;
@@ -670,11 +730,11 @@
 		cursor: pointer;
 	}
 
-	.cancel-btn:hover {
+	.skip-btn:hover {
 		background: #f5f5f5;
 	}
 
-	.submit-btn {
+	.save-btn {
 		flex: 2;
 		padding: 8px;
 		background: #ff3e00;
@@ -684,10 +744,147 @@
 		font-size: 13px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: all 0.15s ease;
 	}
 
-	.submit-btn:hover {
+	.save-btn:hover {
 		background: #e63600;
+	}
+
+	/* Annotations Panel */
+	#svelte-animation-inspector-panel {
+		position: fixed;
+		bottom: 52px;
+		right: 8px;
+		width: 260px;
+		background: white;
+		border-radius: 12px;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+		z-index: 999998;
+		font-family:
+			system-ui,
+			-apple-system,
+			sans-serif;
+		overflow: hidden;
+	}
+
+	.panel-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 10px 12px;
+		background: #f8f8f8;
+		border-bottom: 1px solid #eee;
+		font-size: 13px;
+		font-weight: 600;
+		color: #333;
+	}
+
+	.clear-btn {
+		background: none;
+		border: none;
+		color: #999;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.clear-btn:hover {
+		color: #ff3e00;
+	}
+
+	.panel-list {
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.panel-item {
+		padding: 8px 12px;
+		border-bottom: 1px solid #f0f0f0;
+	}
+
+	.panel-item:last-child {
+		border-bottom: none;
+	}
+
+	.item-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 4px;
+	}
+
+	.item-num {
+		font-size: 11px;
+		color: #ff3e00;
+		font-weight: 600;
+	}
+
+	.item-tag {
+		font-size: 11px;
+		color: #666;
+	}
+
+	.item-remove {
+		margin-left: auto;
+		background: none;
+		border: none;
+		color: #ccc;
+		font-size: 16px;
+		cursor: pointer;
+		padding: 0;
+		line-height: 1;
+	}
+
+	.item-remove:hover {
+		color: #ff3e00;
+	}
+
+	.item-note {
+		font-size: 12px;
+		color: #333;
+	}
+
+	.copy-all-btn {
+		width: 100%;
+		padding: 12px;
+		background: #ff3e00;
+		color: white;
+		border: none;
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.copy-all-btn:hover {
+		background: #e63600;
+	}
+
+	/* Toast */
+	#svelte-animation-inspector-toast {
+		position: fixed;
+		bottom: 60px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: #333;
+		color: white;
+		padding: 10px 20px;
+		border-radius: 20px;
+		font-family:
+			system-ui,
+			-apple-system,
+			sans-serif;
+		font-size: 13px;
+		z-index: 999999;
+		animation: toast-in 0.3s ease;
+	}
+
+	@keyframes toast-in {
+		from {
+			opacity: 0;
+			transform: translateX(-50%) translateY(10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(-50%) translateY(0);
+		}
 	}
 </style>
