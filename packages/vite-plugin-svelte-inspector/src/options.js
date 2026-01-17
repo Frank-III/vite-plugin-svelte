@@ -5,6 +5,7 @@ import { debug } from './debug.js';
 /** @type {import('./public.d.ts').Options} */
 export const defaultInspectorOptions = {
 	toggleKeyCombo: 'alt-x',
+	animationToggleKeyCombo: 'alt-a',
 	navKeys: { parent: 'ArrowUp', child: 'ArrowDown', next: 'ArrowRight', prev: 'ArrowLeft' },
 	escapeKeys: ['Backspace', 'Escape'],
 	openKey: 'Enter',

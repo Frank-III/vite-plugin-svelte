@@ -11,6 +11,17 @@ export interface Options {
 	toggleKeyCombo?: string;
 
 	/**
+	 * define a key combo to toggle the animation inspector,
+	 * @default 'alt-a'
+	 *
+	 * The animation inspector allows you to pause animations, annotate them,
+	 * and copy structured data for AI tools like Claude Code.
+	 *
+	 * same format as toggleKeyCombo
+	 */
+	animationToggleKeyCombo?: string;
+
+	/**
 	 * define keys to select elements with via keyboard
 	 * @default {parent: 'ArrowUp', child: 'ArrowDown', next: 'ArrowRight', prev: 'ArrowLeft' }
 	 *
